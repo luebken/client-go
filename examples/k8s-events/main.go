@@ -1,28 +1,20 @@
-// Note: the example only works with the code within the same release/branch.
 package main
 
 import (
-	"context"
 	"fmt"
 	"time"
 
-	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
-	//
-	// Uncomment to load all auth plugins
-	// _ "k8s.io/client-go/plugin/pkg/client/auth"
-	//
-	// Or uncomment to load specific auth plugins
-	// _ "k8s.io/client-go/plugin/pkg/client/auth/azure"
-	// _ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
-	// _ "k8s.io/client-go/plugin/pkg/client/auth/oidc"
-	// _ "k8s.io/client-go/plugin/pkg/client/auth/openstack"
+	"k8s.io/client-go/tools/cache"
+
+	corev1 "k8s.io/api/core/v1"
+
+	kubeinformers "k8s.io/client-go/informers"
 )
 
 func main() {
-	fmt.Println("Start")
+	fmt.Println("Start") // doesn't work
 
 	// creates the in-cluster config
 	config, err := rest.InClusterConfig()
@@ -34,29 +26,38 @@ func main() {
 	if err != nil {
 		panic(err.Error())
 	}
+
+	kubeInformerFactory := kubeinformers.NewSharedInformerFactory(clientset, time.Second*30)
+	podInformer := kubeInformerFactory.Core().V1().Pods().Informer()
+
+	podInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:    onAdd,
+		DeleteFunc: onDelete,
+		UpdateFunc: onUpdate,
+	})
+
+	stop := make(chan struct{})
+	defer close(stop)
+	kubeInformerFactory.Start(stop)
 	for {
-		// get pods in all the namespaces by omitting namespace
-		// Or specify namespace to get pods in particular namespace
-		pods, err := clientset.CoreV1().Pods("").List(context.TODO(), metav1.ListOptions{})
-		if err != nil {
-			panic(err.Error())
-		}
-		fmt.Printf("There are %d pods in the cluster\n", len(pods.Items))
-
-		// Examples for error handling:
-		// - Use helper functions e.g. errors.IsNotFound()
-		// - And/or cast to StatusError and use its properties like e.g. ErrStatus.Message
-		_, err = clientset.CoreV1().Pods("default").Get(context.TODO(), "example-xxxxx", metav1.GetOptions{})
-		if errors.IsNotFound(err) {
-			fmt.Printf("Pod example-xxxxx not found in default namespace\n")
-		} else if statusError, isStatus := err.(*errors.StatusError); isStatus {
-			fmt.Printf("Error getting pod %v\n", statusError.ErrStatus.Message)
-		} else if err != nil {
-			panic(err.Error())
-		} else {
-			fmt.Printf("Found example-xxxxx pod in default namespace\n")
-		}
-
-		time.Sleep(1 * time.Second)
+		time.Sleep(time.Second)
 	}
+}
+
+func onAdd(obj interface{}) {
+	pod := obj.(*corev1.Pod)
+	fmt.Printf("Pod was added: %s. With labels: %s.\n", pod.Name, pod.Labels)
+	customdashboardAuto := pod.Labels["instana_customdashboard_auto"] == "true"
+	appLabel := pod.Labels["app"] != ""
+	if customdashboardAuto && appLabel {
+		fmt.Printf("===>: Will create dashboard for %s with %s \n", pod.Name, pod.Labels)
+	}
+}
+func onDelete(obj interface{}) {
+	//pod := obj.(*corev1.Pod)
+	//fmt.Printf("pod delete: %s \n", pod.Name)
+}
+func onUpdate(obj1 interface{}, obj2 interface{}) {
+	//pod := obj1.(*corev1.Pod)
+	//fmt.Printf("pod update: %s \n", pod.Name)
 }
